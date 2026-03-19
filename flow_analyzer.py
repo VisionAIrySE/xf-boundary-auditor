@@ -11,7 +11,7 @@ def _iter_source_files(root: str) -> List[str]:
     out: List[str] = []
     for dirpath, dirnames, filenames in os.walk(root):
         # prune common junk
-        dirnames[:] = [d for d in dirnames if d not in {".git", ".xf", ".venv", "venv", "__pycache__", "node_modules"}]
+        dirnames[:] = [d for d in dirnames if d not in {".git", ".worktrees", ".xf", ".venv", "venv", "__pycache__", "node_modules"}]
         for fn in filenames:
             if fn.endswith(".py"):
                 out.append(os.path.join(dirpath, fn))
