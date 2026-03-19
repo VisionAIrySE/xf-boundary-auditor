@@ -6,7 +6,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 
-from flow_analyzer import build_index
+from flow_analyzer import build_index, from_import_existence_violations
 
 
 AUDIT_TOOLS = {"Edit", "Write"}
@@ -25,106 +25,15 @@ def _write_json(path: str, obj: Dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def _find_existence_violations(root: str, index: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Project-local existence checks.
+def _find_existence_violations(index: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """MVP existence enforcement.
 
-    1) Bare-name calls must resolve to a project export OR be a builtin OR be imported.
-    2) `from local_module import X` must import symbols that exist in that local module.
+    High-signal only (MVP): local `from X import Y` where X is in-repo.
 
-    Third-party modules are treated as out-of-scope (no validation).
+    Note: We explicitly *do not* attempt bare-name call resolution in MVP due to
+    false positives from locals/params/closures.
     """
-    all_exports = set()
-    for info in index.get("modules", {}).values():
-        for sym in info.get("exports", []):
-            all_exports.add(sym)
-
-    from scanner_registry import scan_file
-
-    import builtins
-
-    builtin_names = set(dir(builtins))
-
-    violations: List[Dict[str, Any]] = []
-    vid = 1
-
-    # Build quick lookup: local module -> exports
-    exports_by_module = {
-        m: set(info.get("exports", []))
-        for m, info in index.get("modules", {}).items()
-    }
-
-    # Pass 1: validate from-imports for *local* modules only
-
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in {".git", ".xf", ".venv", "venv", "__pycache__", "node_modules"}]
-        for fn in filenames:
-            if not fn.endswith(".py"):
-                continue
-            path = os.path.join(dirpath, fn)
-            st = scan_file(path)
-            if not st:
-                continue
-            for imp in getattr(st, "from_imports", []) or []:
-                mod = (imp.get("module") or "").split(".")[-1]
-                name = imp.get("name")
-                line = imp.get("line") or 0
-                if not mod or not name or name == "*":
-                    continue
-                if mod not in exports_by_module:
-                    # third-party or not in project index: out of scope
-                    continue
-                if name not in exports_by_module[mod]:
-                    violations.append({
-                        "id": f"v{vid:03d}",
-                        "type": "interface_existence",
-                        "severity": "error",
-                        "caller_module": os.path.relpath(path, root),
-                        "caller_line": line,
-                        "callee_module": mod,
-                        "symbol": name,
-                        "detail": f"from {mod} import {name} — symbol does not exist in local module exports.",
-                        "status": "open",
-                    })
-                    vid += 1
-
-    # Pass 2: unresolved bare-name calls
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in {".git", ".xf", ".venv", "venv", "__pycache__", "node_modules"}]
-        for fn in filenames:
-            if not fn.endswith(".py"):
-                continue
-            path = os.path.join(dirpath, fn)
-            st = scan_file(path)
-            if not st:
-                continue
-            imported = set(st.imported_symbols or [])
-            for c in st.calls:
-                sym = c.get("symbol")
-                line = c.get("line")
-                kind = c.get("kind")
-                if kind != "name":
-                    continue
-                if not sym or sym in all_exports:
-                    continue
-                # ignore imported names and common builtins to reduce noise
-                if sym in imported:
-                    continue
-                if sym in builtin_names:
-                    continue
-                violations.append({
-                    "id": f"v{vid:03d}",
-                    "type": "interface_existence",
-                    "severity": "error",
-                    "caller_module": os.path.relpath(path, root),
-                    "caller_line": line or 0,
-                    "callee_module": "<unknown>",
-                    "symbol": sym,
-                    "detail": f"Symbol '{sym}' is called but was not found in any scanned module exports.",
-                    "status": "open",
-                })
-                vid += 1
-
-    return violations
+    return from_import_existence_violations(index)
 
 
 def _format_report(violations: List[Dict[str, Any]]) -> str:
@@ -166,7 +75,7 @@ def main() -> int:
     }
     _write_json(os.path.join(xf_dir, "boundary_index.json"), idx_obj)
 
-    violations = _find_existence_violations(root, index)
+    violations = _find_existence_violations(index)
 
     vio_obj = {
         "schema_version": "1.0",
