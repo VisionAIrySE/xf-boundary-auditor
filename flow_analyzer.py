@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import asdict
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Any
 
 from scanner_registry import scan_file
 
@@ -13,7 +12,7 @@ def _iter_source_files(root: str) -> List[str]:
         # prune common junk
         dirnames[:] = [d for d in dirnames if d not in {".git", ".worktrees", ".xf", ".venv", "venv", "__pycache__", "node_modules"}]
         for fn in filenames:
-            if fn.endswith(".py"):
+            if fn.endswith(".py") or fn.endswith(".sh"):
                 out.append(os.path.join(dirpath, fn))
     return out
 
