@@ -56,6 +56,12 @@ class PythonScanner(ScannerBase):
                 for alias in node.names:
                     # from X import Y as Z → brings Z/Y into local namespace
                     st.imported_symbols.append(alias.asname or alias.name)
+                    st.from_imports.append({
+                        "module": node.module,
+                        "name": alias.name,
+                        "asname": alias.asname,
+                        "line": getattr(node, "lineno", None),
+                    })
 
         cc = _CallCollector()
         cc.visit(tree)

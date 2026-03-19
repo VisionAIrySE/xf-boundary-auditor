@@ -25,9 +25,14 @@ def _write_json(path: str, obj: Dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def _find_unresolved_calls(root: str, index: Dict[str, Any]) -> List[Dict[str, Any]]:
-    # MVP: existence only. We approximate existence by checking whether a called symbol
-    # exists as an export in *any* scanned module.
+def _find_existence_violations(root: str, index: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Project-local existence checks.
+
+    1) Bare-name calls must resolve to a project export OR be a builtin OR be imported.
+    2) `from local_module import X` must import symbols that exist in that local module.
+
+    Third-party modules are treated as out-of-scope (no validation).
+    """
     all_exports = set()
     for info in index.get("modules", {}).values():
         for sym in info.get("exports", []):
@@ -39,8 +44,50 @@ def _find_unresolved_calls(root: str, index: Dict[str, Any]) -> List[Dict[str, A
 
     builtin_names = set(dir(builtins))
 
-    violations = []
+    violations: List[Dict[str, Any]] = []
     vid = 1
+
+    # Build quick lookup: local module -> exports
+    exports_by_module = {
+        m: set(info.get("exports", []))
+        for m, info in index.get("modules", {}).items()
+    }
+
+    # Pass 1: validate from-imports for *local* modules only
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in {".git", ".xf", ".venv", "venv", "__pycache__", "node_modules"}]
+        for fn in filenames:
+            if not fn.endswith(".py"):
+                continue
+            path = os.path.join(dirpath, fn)
+            st = scan_file(path)
+            if not st:
+                continue
+            for imp in getattr(st, "from_imports", []) or []:
+                mod = (imp.get("module") or "").split(".")[-1]
+                name = imp.get("name")
+                line = imp.get("line") or 0
+                if not mod or not name or name == "*":
+                    continue
+                if mod not in exports_by_module:
+                    # third-party or not in project index: out of scope
+                    continue
+                if name not in exports_by_module[mod]:
+                    violations.append({
+                        "id": f"v{vid:03d}",
+                        "type": "interface_existence",
+                        "severity": "error",
+                        "caller_module": os.path.relpath(path, root),
+                        "caller_line": line,
+                        "callee_module": mod,
+                        "symbol": name,
+                        "detail": f"from {mod} import {name} — symbol does not exist in local module exports.",
+                        "status": "open",
+                    })
+                    vid += 1
+
+    # Pass 2: unresolved bare-name calls
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in {".git", ".xf", ".venv", "venv", "__pycache__", "node_modules"}]
         for fn in filenames:
@@ -119,7 +166,7 @@ def main() -> int:
     }
     _write_json(os.path.join(xf_dir, "boundary_index.json"), idx_obj)
 
-    violations = _find_unresolved_calls(root, index)
+    violations = _find_existence_violations(root, index)
 
     vio_obj = {
         "schema_version": "1.0",

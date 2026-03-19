@@ -13,6 +13,7 @@ class SymbolTable:
     imports: List[str] = field(default_factory=list)  # imported modules
     imported_symbols: List[str] = field(default_factory=list)  # names imported into module namespace
     calls: List[Dict[str, Any]] = field(default_factory=list)  # {symbol, line, kind}
+    from_imports: List[Dict[str, Any]] = field(default_factory=list)  # {module, name, asname, line}
     state_writes: List[str] = field(default_factory=list)
     state_reads: List[str] = field(default_factory=list)
     env_vars_read: List[str] = field(default_factory=list)
