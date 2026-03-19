@@ -43,10 +43,19 @@ class PythonScanner(ScannerBase):
         module_name = os.path.splitext(os.path.basename(path))[0]
         st = SymbolTable(module_name=module_name, path=path)
 
-        # Top-level exports only (functions/classes defined at module level)
+        # Top-level exports: functions, classes, AND module-level variable assignments.
+        # Constants like STATE_FILE, BYPASS_TTL, SYSTEM_PROMPT are ast.Assign nodes,
+        # not FunctionDef — must include them or from-import checks produce false positives.
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 st.exports.append(node.name)
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        st.exports.append(target.id)
+            elif isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name):
+                    st.exports.append(node.target.id)
 
         # All imports at any nesting level — catches imports inside function bodies,
         # test methods, conditionals, etc.
