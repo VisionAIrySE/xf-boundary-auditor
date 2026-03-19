@@ -43,10 +43,17 @@ class PythonScanner(ScannerBase):
         module_name = os.path.splitext(os.path.basename(path))[0]
         st = SymbolTable(module_name=module_name, path=path)
 
+        # Top-level exports only (functions/classes defined at module level)
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 st.exports.append(node.name)
-            elif isinstance(node, ast.Import):
+
+        # All imports at any nesting level — catches imports inside function bodies,
+        # test methods, conditionals, etc.
+        # Dispatch uses this pattern extensively: from X import Y inside test methods
+        # and inline python3 -c blocks. ast.walk covers every node in the tree.
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
                 for alias in node.names:
                     st.imports.append(alias.name)
                     st.imported_symbols.append(alias.asname or alias.name.split(".")[-1])
@@ -54,7 +61,6 @@ class PythonScanner(ScannerBase):
                 if node.module:
                     st.imports.append(node.module)
                 for alias in node.names:
-                    # from X import Y as Z → brings Z/Y into local namespace
                     st.imported_symbols.append(alias.asname or alias.name)
                     st.from_imports.append({
                         "module": node.module,
